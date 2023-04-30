@@ -1,7 +1,11 @@
 use asr::{Address, Process};
-use bytemuck::Pod;
+use bytemuck::CheckedBitPattern;
 mod epsxe;
 mod xebra;
+mod pcsx_redux;
+mod duckstation;
+mod psxfin;
+mod retroarch;
 
 static STATE: spinning_top::Spinlock<State> = spinning_top::const_spinlock(State {
     proc: None,
@@ -19,39 +23,7 @@ pub struct ProcessInfo {
 
 impl ProcessInfo {
     fn attach_process() -> Option<Self> {
-        const PROCESS_NAMES: [&str; 8] = [
-            "ePSXe.exe",
-            "psxfin.exe",
-            "duckstation-qt-x64-ReleaseLTCG.exe", "duckstation-nogui-x64-ReleaseLTCG.exe",
-            "retroarch.exe",
-            "pcsx-redux.main",
-            "XEBRA.EXE",
-            "EmuHawk.exe"
-        ];
-
-        let mut proc: Option<Process> = None;
-        let mut proc_name: Option<&str> = None;
-
-        for name in PROCESS_NAMES {
-            proc = Process::attach(name);
-            if proc.is_some() {
-                proc_name = Some(name);
-                break
-            }
-        }
-
-        let emulator_process = proc?;
-
-        let emulator_type = match proc_name? {
-            "ePSXe.exe" => Emulator::Epsxe,
-            //"psxfin.exe" => Emulator::pSX,
-            "duckstation-qt-x64-ReleaseLTCG.exe" | "duckstation-nogui-x64-ReleaseLTCG.exe" => Emulator::Duckstation,
-            "retroarch.exe" => Emulator::Retroarch,
-            //"pcsx-redux.main" => Emulator::PCSX_Redux,
-            "XEBRA.EXE" => Emulator::Xebra,
-            "EmuHawk.exe" => Emulator::EmuHawk,
-            _ => return None,
-        };
+        let (emulator_type, Some(emulator_process)) = PROCESS_NAMES.iter().map(|name| (name.1, Process::attach(name.0))).find(|p| p.1.is_some())? else { return None };
 
         Some(Self {
             emulator_type,
@@ -60,30 +32,34 @@ impl ProcessInfo {
         })
     }
 
-    fn look_for_wram(&mut self) -> Option<Address> {
-        match self.emulator_type {
+    fn look_for_wram(&self) -> Option<Address> {
+        let addr = match self.emulator_type {
             Emulator::Epsxe => epsxe::epsxe(self),
-            //"psxfin.exe",
-            //"duckstation-qt-x64-ReleaseLTCG.exe", "duckstation-nogui-x64-ReleaseLTCG.exe",
-            //"retroarch.exe",
-            //"pcsx-redux.main",
+            Emulator::PsxFin => psxfin::psxfin(self),
+            Emulator::Duckstation => duckstation::duckstation(self),
+            Emulator::Retroarch => retroarch::retroarch(self),
+            Emulator::PcsxRedux => pcsx_redux::pcsx_redux(self),
             Emulator::Xebra => xebra::xebra(self),
-            //"EmuHawk.exe"
-            _ => None,
-        }      
+        };
+
+        if addr.is_some() {
+            asr::set_tick_rate(120.0);
+        } else {
+            asr::set_tick_rate(0.4);
+        }
+
+        addr
     }
 
     fn keep_alive(&mut self) -> bool {
         match self.emulator_type {
             Emulator::Epsxe => epsxe::keep_alive(),
-            //"psxfin.exe",
-            //"duckstation-qt-x64-ReleaseLTCG.exe", "duckstation-nogui-x64-ReleaseLTCG.exe",
-            //"retroarch.exe",
-            //"pcsx-redux.main",
+            Emulator::PsxFin => psxfin::keep_alive(),
+            Emulator::Duckstation => duckstation::keep_alive(self),
+            Emulator::Retroarch => retroarch::keep_alive(self),
+            Emulator::PcsxRedux => pcsx_redux::keep_alive(self),
             Emulator::Xebra => xebra::keep_alive(),
-            //"EmuHawk.exe"
-            _ => false,
-        }      
+        }
     }
 }
 
@@ -118,24 +94,73 @@ impl State {
     }
 }
 
+/// Calls the internal routines needed in order to hook to the target emulator and find the address of the emulated RAM.
+/// 
+/// Returns true if successful, false otherwise.
+/// 
+/// Supported emulators are:
+/// - ePSXe
+/// - pSX
+/// - Duckstation
+/// - Retroarch (supported cores: Beetle-PSX, Swanstation, PCSX ReARMed)
+/// - PCSX-redux
+/// - XEBRA
 pub fn update() -> bool {
     let state = &mut STATE.lock();
     state.init()
 }
 
-pub fn read<T: Pod>(offset: u32) -> Result<T, asr::Error> {
+/// Reads any value from the emulated RAM.
+/// 
+/// In PS1, memory addresses are usually mapped at fixed locations starting from `0x80000000`,
+/// and is the way many emulators, as well as the GameShark on original hardware, access memory.
+/// 
+/// For this reason, this method will automatically convert offsets provided in such format.
+/// For example providing an offset of `0x1234` or `0x80001234` will return the same value.
+/// 
+/// Providing any offset outside the range of the PS1's RAM will return `Err()`.
+pub fn read<T: CheckedBitPattern>(offset: u32) -> Result<T, asr::Error> {
+    if (offset > 0x1FFFFF && offset < 0x80000000) || offset > 0x801FFFFF {
+        return Err(asr::Error)
+    }; 
+
     let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
-    proc.emulator_process.read(Address(wram.0 + offset as u64))
+
+    let Some(proc) = &state.proc else {
+        return Err(asr::Error)
+    };
+
+    let Some(wram) = &proc.wram_base else {
+        return Err(asr::Error)
+    };
+
+    const WRAMB: u32 = 0x80000000;
+
+    let mut offsetx = offset;
+    
+    if offsetx >= WRAMB {
+        offsetx -= WRAMB
+    }
+
+    proc.emulator_process.read(Address(wram.0 + offsetx as u64))
 }
 
+#[derive(Copy, Clone, PartialEq)]
 enum Emulator {
     Epsxe,
-    //pSX,
+    PsxFin,
     Duckstation,
     Retroarch,
-    //PCSX_Redux,
+    PcsxRedux,
     Xebra,
-    EmuHawk,
 }
+
+const PROCESS_NAMES: [(&str, Emulator); 7] = [
+    ("ePSXe.exe", Emulator::Epsxe),
+    ("psxfin.exe", Emulator::PsxFin),
+    ("duckstation-qt-x64-ReleaseLTCG.exe", Emulator::Duckstation),
+    ("duckstation-nogui-x64-ReleaseLTCG.exe", Emulator::Duckstation),
+    ("retroarch.exe", Emulator::Retroarch),
+    ("pcsx-redux.main", Emulator::PcsxRedux),
+    ("XEBRA.EXE", Emulator::Xebra),
+];

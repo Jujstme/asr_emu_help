@@ -1,7 +1,7 @@
 use asr::Address;
 use asr::signature::Signature;
 
-pub fn xebra(game: &crate::ps1::ProcessInfo) -> Option<Address> {
+pub fn xebra(game: &super::ProcessInfo) -> Option<Address> {
     const NAME: &str = "XEBRA.EXE";
     const SIG: Signature<15> = Signature::new("E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? 89 C8 C1 F8 10");
     let proc = &game.emulator_process;
