@@ -1,10 +1,9 @@
-use asr::{Address, signature::Signature, MemoryRangeFlags};
-use super::Endianness;
+use asr::{Address, signature::Signature, MemoryRangeFlags, primitives::dynamic_endian::Endian};
 
 pub fn blastem(game: &mut super::ProcessInfo) -> Option<Address> {
     const SIG: Signature<16> = Signature::new("72 0E 81 E1 FF FF 00 00 66 8B 89 ?? ?? ?? ?? C3");
     let proc = &game.emulator_process;
-    game.endianess = Endianness::LittleEndian;
+    game.endianness = Endian::Little;
 
     let scanned_address = proc.memory_ranges()
         .filter(|m| m.flags().unwrap_or_default().contains(MemoryRangeFlags::WRITE) && m.size().unwrap_or_default() == 0x101000)

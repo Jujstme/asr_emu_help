@@ -1,5 +1,4 @@
-use asr::{Address, signature::Signature};
-use super::Endianness;
+use asr::{Address, signature::Signature, primitives::dynamic_endian::Endian};
 
 pub fn gens(game: &mut super::ProcessInfo) -> Option<Address> {
     const SIG: Signature<10> = Signature::new("72 ?? 81 ?? FF FF 00 00 66 8B");
@@ -12,10 +11,10 @@ pub fn gens(game: &mut super::ProcessInfo) -> Option<Address> {
 
     let ptr = SIG.scan_process_range(proc, main_module_address, main_module_size)?.0 + 11;
 
-    game.endianess = if proc.read::<u8>(Address(ptr + 4)).ok()? == 0x86 {
-        Endianness::BigEndian
+    game.endianness = if proc.read::<u8>(Address(ptr + 4)).ok()? == 0x86 {
+        Endian::Big
     } else {
-        Endianness::LittleEndian
+        Endian::Little
     };
 
     let wram = proc.read::<u32>(Address(ptr)).ok()? as u64;

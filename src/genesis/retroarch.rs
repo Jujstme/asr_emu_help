@@ -1,7 +1,6 @@
-use asr::{Address, signature::Signature, MemoryRangeFlags};
-use super::Endianness;
+use asr::{Address, signature::Signature, MemoryRangeFlags, sync::Mutex, primitives::dynamic_endian::Endian};
 
-static STATICDATA: spinning_top::Spinlock<StaticData> = spinning_top::const_spinlock(StaticData {
+static STATICDATA: Mutex<StaticData> = Mutex::new(StaticData {
     core_base: Address(0),
 });
 
@@ -34,7 +33,7 @@ pub fn retroarch(game: &mut super::ProcessInfo) -> Option<Address> {
     static_data.core_base = core_address;
 
     if core_name == SUPPORTED_CORES[0] {
-        game.endianess = Endianness::LittleEndian;
+        game.endianness = Endian::Little;
 
         // BlastEm
         const SIG: Signature<16> = Signature::new("72 0E 81 E1 FF FF 00 00 66 8B 89 ?? ?? ?? ?? C3");
@@ -47,7 +46,7 @@ pub fn retroarch(game: &mut super::ProcessInfo) -> Option<Address> {
 
         Some(Address(wram as u64))
     } else if core_name == SUPPORTED_CORES[1] || core_name == SUPPORTED_CORES[2] {
-        game.endianess = Endianness::LittleEndian;
+        game.endianness = Endian::Little;
 
         // Genesis plus GX
         if is_64_bit {
@@ -61,7 +60,7 @@ pub fn retroarch(game: &mut super::ProcessInfo) -> Option<Address> {
             let wram = proc.read::<u32>(Address(ptr)).ok()? as u64;
             Some(Address(wram))        }
     } else if core_name == SUPPORTED_CORES[3] {
-        game.endianess = Endianness::LittleEndian;
+        game.endianness = Endian::Little;
 
         // Picodrive
         if is_64_bit {

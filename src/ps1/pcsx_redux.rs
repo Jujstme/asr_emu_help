@@ -1,7 +1,7 @@
-use asr::{Address, signature::Signature, MemoryRangeFlags};
+use asr::{Address, signature::Signature, MemoryRangeFlags, sync::Mutex};
 use crate::shared::check_for_64_bit;
 
-static STATICDATA: spinning_top::Spinlock<StaticData> = spinning_top::const_spinlock(StaticData {
+static STATICDATA: Mutex<StaticData> = Mutex::new(StaticData {
     is_64_bit: false,
     addr_base: 0,
     addr: 0,

@@ -7,9 +7,9 @@ edition = "2021"
 
 [dependencies]
 asr = { git = "https://github.com/LiveSplit/asr", features = ["signature", "derive", "flags"] }
-spinning_top = "0.2.5"
 bytemuck = "1.13.1"
 
 [features]
 ps1 = []
 genesis = []
+wii = []

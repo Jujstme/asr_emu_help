@@ -1,6 +1,6 @@
-use asr::{Address, signature::Signature};
+use asr::{Address, signature::Signature, sync::Mutex};
 
-static STATICDATA: spinning_top::Spinlock<StaticData> = spinning_top::const_spinlock(StaticData {
+static STATICDATA: Mutex<StaticData> = Mutex::new(StaticData {
     addr: Address(0),
 });
 

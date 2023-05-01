@@ -1,8 +1,6 @@
-use asr::Address;
-use asr::signature::Signature;
-use super::Endianness;
+use asr::{Address, signature::Signature, sync::Mutex, primitives::dynamic_endian::Endian};
 
-static STATICDATA: spinning_top::Spinlock<StaticData> = spinning_top::const_spinlock(StaticData {
+static STATICDATA: Mutex<StaticData> = Mutex::new(StaticData {
     addr: Address(0),
 });
 
@@ -29,7 +27,7 @@ pub fn fusion(game: &mut super::ProcessInfo) -> Option<Address> {
 
     let addr = proc.read::<u32>(addr).ok()?;
     
-    game.endianess = Endianness::BigEndian;
+    game.endianness = Endian::Big;
 
     Some(Address(addr as u64))
 }

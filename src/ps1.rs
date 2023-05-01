@@ -1,4 +1,5 @@
-use asr::{Address, Process};
+use core::fmt::Error;
+use asr::{Address, Process, sync::Mutex};
 use bytemuck::CheckedBitPattern;
 mod epsxe;
 mod xebra;
@@ -7,7 +8,7 @@ mod duckstation;
 mod psxfin;
 mod retroarch;
 
-static STATE: spinning_top::Spinlock<State> = spinning_top::const_spinlock(State {
+static STATE: Mutex<State> = Mutex::new(State {
     proc: None,
 });
 
@@ -23,7 +24,10 @@ pub struct ProcessInfo {
 
 impl ProcessInfo {
     fn attach_process() -> Option<Self> {
-        let (emulator_type, Some(emulator_process)) = PROCESS_NAMES.iter().map(|name| (name.1, Process::attach(name.0))).find(|p| p.1.is_some())? else { return None };
+        let (emulator_type, Some(emulator_process)) = PROCESS_NAMES
+            .iter()
+            .map(|name| (name.1, Process::attach(name.0)))
+            .find(|p| p.1.is_some())? else { return None };
 
         Some(Self {
             emulator_type,
@@ -41,12 +45,6 @@ impl ProcessInfo {
             Emulator::PcsxRedux => pcsx_redux::pcsx_redux(self),
             Emulator::Xebra => xebra::xebra(self),
         };
-
-        if addr.is_some() {
-            asr::set_tick_rate(120.0);
-        } else {
-            asr::set_tick_rate(0.4);
-        }
 
         addr
     }
@@ -119,19 +117,19 @@ pub fn update() -> bool {
 /// For example providing an offset of `0x1234` or `0x80001234` will return the same value.
 /// 
 /// Providing any offset outside the range of the PS1's RAM will return `Err()`.
-pub fn read<T: CheckedBitPattern>(offset: u32) -> Result<T, asr::Error> {
+pub fn read<T: CheckedBitPattern>(offset: u32) -> Result<T, Error> {
     if (offset > 0x1FFFFF && offset < 0x80000000) || offset > 0x801FFFFF {
-        return Err(asr::Error)
+        return Err(Error)
     }; 
 
     let state = STATE.lock();
 
     let Some(proc) = &state.proc else {
-        return Err(asr::Error)
+        return Err(Error)
     };
 
     let Some(wram) = &proc.wram_base else {
-        return Err(asr::Error)
+        return Err(Error)
     };
 
     const WRAMB: u32 = 0x80000000;
@@ -142,10 +140,14 @@ pub fn read<T: CheckedBitPattern>(offset: u32) -> Result<T, asr::Error> {
         offsetx -= WRAMB
     }
 
-    proc.emulator_process.read(Address(wram.0 + offsetx as u64))
+    if let Ok(value) = proc.emulator_process.read(Address(wram.0 + offsetx as u64)) {
+        Ok(value)
+    } else {
+        Err(Error)
+    }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum Emulator {
     Epsxe,
     PsxFin,

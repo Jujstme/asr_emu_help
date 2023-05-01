@@ -6,3 +6,6 @@ pub mod ps1;
 
 #[cfg(feature = "genesis")]
 pub mod genesis;
+
+#[cfg(feature = "wii")]
+pub mod wii;

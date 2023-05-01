@@ -1,6 +1,4 @@
-use asr::Address;
-use asr::signature::Signature;
-use super::Endianness;
+use asr::{Address, signature::Signature, primitives::dynamic_endian::Endian};
 
 pub fn segaclassics(game: &mut super::ProcessInfo) -> Option<Address> {
     const SIG_GAMEROOM: Signature<20> = Signature::new("C7 05 ???????? ???????? A3 ???????? A3 ????????");
@@ -22,7 +20,7 @@ pub fn segaclassics(game: &mut super::ProcessInfo) -> Option<Address> {
     ptr = proc.read::<u32>(Address(ptr)).ok()? as u64;
     ptr = proc.read::<u32>(Address(ptr)).ok()? as u64;
 
-    game.endianess = Endianness::LittleEndian;
+    game.endianness = Endian::Little;
 
     Some(Address(ptr))
 }

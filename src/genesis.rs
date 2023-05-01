@@ -1,4 +1,9 @@
-use asr::{Address, Process};
+use core::fmt::Error;
+use asr::{
+    Address, Process,
+    sync::Mutex,
+    primitives::dynamic_endian::{FromEndian, Endian},
+};
 use bytemuck::CheckedBitPattern;
 mod segaclassics;
 mod fusion;
@@ -6,7 +11,7 @@ mod gens;
 mod blastem;
 mod retroarch;
 
-static STATE: spinning_top::Spinlock<State> = spinning_top::const_spinlock(State {
+static STATE: Mutex<State> = Mutex::new(State {
     proc: None,
 });
 
@@ -18,18 +23,20 @@ pub struct ProcessInfo {
     emulator_type: Emulator,
     emulator_process: Process,
     wram_base: Option<Address>,
-    endianess: Endianness,
+    endianness: Endian,
 }
 
 impl ProcessInfo {
     fn attach_process() -> Option<Self> {
-        let (emulator_type, Some(emulator_process)) = PROCESS_NAMES.iter().map(|name| (name.1, Process::attach(name.0))).find(|p| p.1.is_some())? else { return None };
+        let (emulator_type, Some(emulator_process)) = PROCESS_NAMES.iter()
+            .map(|name| (name.1, Process::attach(name.0)))
+            .find(|p| p.1.is_some())? else { return None };
 
         Some(Self {
             emulator_type,
             emulator_process,
             wram_base: None,
-            endianess: Endianness::LittleEndian,
+            endianness: Endian::Little,  // Endianness is supposed to be Little, until stated otherwise in the code
         })
     }
 
@@ -104,25 +111,44 @@ pub fn update() -> bool {
 /// The same call, performed on two different emulators, can be different
 /// due to the endianness used by the emulator.
 /// 
+/// The offset provided must not be higher than `0xFFFF`, otherwise this method will immediately return `Err()`.
+///
 /// This call is meant to be used by experienced users.
-pub fn read_ignoring_endianness<T: CheckedBitPattern>(offset: u32) -> Result<T, asr::Error> {
+pub fn read_ignoring_endianness<T: CheckedBitPattern>(offset: u32) -> Result<T, Error> {
+    if offset > 0xFFFF {
+        return Err(Error)
+    }
+
     let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
-    proc.emulator_process.read(Address(wram.0 + offset as u64))
+    let Some(proc) = &state.proc else { return Err(Error) };
+    let Some(wram) = &proc.wram_base else { return Err(Error) };
+    
+    if let Ok(output) = proc.emulator_process.read::<T>(Address(wram.0 + offset as u64)) {
+        Ok(output)
+    } else {
+        Err(Error)
+    }
 }
 
-/// Read an u8 from the emulated RAM.
+/// Reads any value from the emulated RAM.
 /// 
 /// The offset provided is meant to be the same used on the original, big-endian system.
-/// The call will automatically convert the offset and the output value to little endian. 
-pub fn read_u8(offset: u32) -> Result<u8, asr::Error> {
+/// The call will automatically convert the offset and the output value to little endian.
+/// 
+/// The offset provided must not be higher than `0xFFFF`, otherwise this method will immediately return `Err()`.
+pub fn read<T: CheckedBitPattern + FromEndian>(offset: u32) -> Result<T, Error> {
+    if (offset > 0xFFFF && offset <= 0xFF0000) || offset > 0xFFFFFF {
+        return Err(Error)
+    }
+
     let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
+    let Some(proc) = &state.proc else { return Err(Error) };
+    let Some(wram) = &proc.wram_base else { return Err(Error) };
 
     let mut end_offset = offset;
-    if proc.endianess == Endianness::LittleEndian {
+
+    // Byte swap the offset if needed
+    if proc.endianness == Endian::Little && core::mem::size_of::<T>() == 1 {
         if end_offset & 1 == 0 {
             end_offset += 1
         } else {
@@ -130,87 +156,17 @@ pub fn read_u8(offset: u32) -> Result<u8, asr::Error> {
         }
     }
 
-    proc.emulator_process.read::<u8>(Address(wram.0 + end_offset as u64))
+    let Ok(value) = proc.emulator_process.read::<T>(Address(wram.0 + end_offset as u64)) else { return Err(Error) };
+    Ok(value.from_endian(proc.endianness))
 }
 
-/// Read an i8 from the emulated RAM.
-/// 
-/// The offset provided is meant to be the same used on the original, big-endian system.
-/// The call will automatically convert the offset and the output value to little endian. 
-pub fn read_i8(offset: u32) -> Result<i8, asr::Error> {
-    let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
-
-    let mut end_offset = offset;
-    if proc.endianess == Endianness::LittleEndian {
-        if end_offset & 1 == 0 {
-            end_offset += 1
-        } else {
-            end_offset -= 1
-        }
-    }
-
-    proc.emulator_process.read::<i8>(Address(wram.0 + end_offset as u64))
-}
-
-/// Read an u16 from the emulated RAM.
-/// 
-/// The offset provided is meant to be the same used on the original, big-endian system.
-/// The call will automatically convert the offset and the output value to little endian. 
-pub fn read_u16(offset: u32) -> Result<u16, asr::Error> {
-    let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
-
-    let value = proc.emulator_process.read::<u16>(Address(wram.0 + offset as u64));
-
-    if let Ok(t_value) = value {
-        if proc.endianess == Endianness::BigEndian {
-            Ok(u16::from_be(t_value))
-        } else {
-            value
-        }
-    } else {
-        value
-    }
-}
-
-/// Read an i16 from the emulated RAM.
-/// 
-/// The offset provided is meant to be the same used on the original, big-endian system.
-/// The call will automatically convert the offset and the output value to little endian. 
-pub fn read_i16(offset: u32) -> Result<i16, asr::Error> {
-    let state = STATE.lock();
-    let Some(proc) = &state.proc else { return Err(asr::Error) };
-    let Some(wram) = &proc.wram_base else { return Err(asr::Error) };
-
-    let value = proc.emulator_process.read::<i16>(Address(wram.0 + offset as u64));
-
-    if let Ok(t_value) = value {
-        if proc.endianess == Endianness::BigEndian {
-            Ok(i16::from_be(t_value))
-        } else {
-            value
-        }
-    } else {
-        value
-    }
-}
-
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 enum Emulator {
     Retroarch,
     SegaClassics,
     Fusion,
     Gens,
     BlastEm,
-}
-
-#[derive(PartialEq)]
-enum Endianness {
-    LittleEndian,
-    BigEndian,
 }
 
 const PROCESS_NAMES: [(&str, Emulator); 6] = [
