@@ -53,7 +53,7 @@ impl ProcessInfo {
     fn keep_alive(&mut self) -> bool {
         match self.emulator_type {
             Emulator::Retroarch => retroarch::keep_alive(self),
-            Emulator::SegaClassics => segaclassics::keep_alive(),
+            Emulator::SegaClassics => segaclassics::keep_alive(self),
             Emulator::Fusion => fusion::keep_alive(self),
             Emulator::Gens => gens::keep_alive(),
             Emulator::BlastEm => blastem::keep_alive(),
